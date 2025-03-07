@@ -3,13 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "homepage": "https://mestachs.github.io/pdf-toolbox",
   "scripts": {
     "dev": "bunx --bun vite",
-    "build": "vite build",
+    "build": "bunx --bun vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "gh-pages -d dist"
   },
   "dependencies": {
+    
     "browser-image-compression": "^2.0.2",
     "gh-pages": "^6.3.0",
     "pdf-lib": "^1.17.1",
