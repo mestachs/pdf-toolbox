@@ -45,10 +45,37 @@ function loadPDFData(response) {
     xhr.onload = function () {
       window.URL.revokeObjectURL(response);
       const blob = new Blob([xhr.response], { type: "application/pdf" });
-      resolve({ pdfURL: window.URL.createObjectURL(blob) });
+      resolve({ pdfURL: window.URL.createObjectURL(blob), size: xhr.response.byteLength });
     };
     xhr.send();
   });
+}
+
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+const SAVED_CONTEXTS = [
+  { max: 1_000,         text: "six SMS texts to your mum" },
+  { max: 10_000,        text: "a Nokia ringtone from 2003" },
+  { max: 50_000,        text: "your entire Hotmail inbox, circa 2002" },
+  { max: 200_000,       text: "a Wikipedia article about artisanal cheese" },
+  { max: 700_000,       text: "the original Netscape Navigator installer" },
+  { max: 1_500_000,     text: "a floppy disk stuffed with clipart" },
+  { max: 4_000_000,     text: "a 3-minute MP3 of questionable taste" },
+  { max: 8_000_000,     text: "a slightly blurry holiday JPEG" },
+  { max: 15_000_000,    text: "the original Doom — yes, the whole game" },
+  { max: 30_000_000,    text: "a Windows 3.11 for Workgroups install" },
+  { max: 60_000_000,    text: "an hour of podcast nobody asked for" },
+  { max: 700_000_000,   text: "a DivX rip burned onto a borrowed CD-R" },
+  { max: 5_000_000_000, text: "a Lord of the Rings Extended Edition DVD" },
+  { max: Infinity,      text: "several seasons of Game of Thrones" },
+];
+
+function savedContext(bytes) {
+  const entry = SAVED_CONTEXTS.find(({ max }) => bytes < max);
+  return entry ? `🌍 The planet thanks you — that's like ${entry.text} freed from a server.` : null;
 }
 
 function PDFMerger() {
@@ -56,6 +83,7 @@ function PDFMerger() {
   const [compressPdf, setCompressPdf] = useState(true);
   const [pdfFiles, setPdfFiles] = useState([]);
   const [fileName, setFileName] = useState("merged");
+  const [mergeResult, setMergeResult] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
 
   const [previewFile, setPreviewFile] = useState(null);
@@ -84,14 +112,16 @@ function PDFMerger() {
   const processFiles = async (files) => {
     const pdfObjects = [...pdfFiles];
     for (const file of files) {
-      const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
       if (file.type.startsWith("image/")) {
         const pdf = await createPdfFromImage(file);
-        pdfObjects.push({ id: idCounter++, name: file.name, file: pdf, url: URL.createObjectURL(pdf), sizeInMB });
+        const sizeInMB = (pdf.size / (1024 * 1024)).toFixed(2);
+        pdfObjects.push({ id: idCounter++, name: file.name, file: pdf, url: URL.createObjectURL(pdf), sizeInMB, sizeBytes: pdf.size });
       } else if (file.type === "application/pdf") {
-        pdfObjects.push({ id: idCounter++, name: file.name, file, url: URL.createObjectURL(file), sizeInMB });
+        const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+        pdfObjects.push({ id: idCounter++, name: file.name, file, url: URL.createObjectURL(file), sizeInMB, sizeBytes: file.size });
       }
     }
+    setMergeResult(null);
     setPdfFiles([...pdfObjects]);
   };
 
@@ -118,6 +148,7 @@ function PDFMerger() {
   const handleRemove = (e, id) => {
     e.stopPropagation();
     setPdfFiles((files) => files.filter((f) => f.id !== id));
+    setMergeResult(null);
     if (previewFile?.id === id) { setPreviewFile(null); setNumPages(null); }
   };
 
@@ -145,10 +176,13 @@ function PDFMerger() {
       }
       const blob = new Blob([await mergedPdf.save()], { type: "application/pdf" });
       let finalUrl = URL.createObjectURL(blob);
+      let finalSize = blob.size;
       if (compressPdf) {
         const element = await _GSPS2PDF({ psDataURL: finalUrl });
-        ({ pdfURL: finalUrl } = await loadPDFData(element));
+        ({ pdfURL: finalUrl, size: finalSize } = await loadPDFData(element));
       }
+      const originalSize = pdfFiles.reduce((sum, f) => sum + f.sizeBytes, 0);
+      setMergeResult({ finalSize, originalSize });
       const link = document.createElement("a");
       link.href = finalUrl;
       link.download = `${fileName.trim() || "merged"}.pdf`;
@@ -215,6 +249,7 @@ function PDFMerger() {
                 <span className="step-number">2</span>
                 <h2>Arrange documents</h2>
                 <span className="file-count">{pdfFiles.length} file{pdfFiles.length !== 1 ? "s" : ""}</span>
+                <span className="total-size">{fmtSize(pdfFiles.reduce((s, f) => s + f.sizeBytes, 0))}</span>
               </div>
               <div className={`documents-layout${previewFile ? " has-preview" : ""}`}>
                 <ReactSortable list={pdfFiles} setList={setPdfFiles} className="document-grid">
@@ -334,6 +369,24 @@ function PDFMerger() {
                   <p className="loading-hint">
                     This may take a moment while the WebAssembly module loads for the first time.
                   </p>
+                )}
+                {mergeResult && !isLoading && (
+                  <div className="merge-result">
+                    <div className="merge-result-row">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      <span>{fmtSize(mergeResult.finalSize)}</span>
+                      {mergeResult.finalSize < mergeResult.originalSize && (
+                        <span className="merge-saved">
+                          −{fmtSize(mergeResult.originalSize - mergeResult.finalSize)} ({Math.round((1 - mergeResult.finalSize / mergeResult.originalSize) * 100)}% smaller)
+                        </span>
+                      )}
+                    </div>
+                    {mergeResult.finalSize < mergeResult.originalSize && (
+                      <p className="merge-planet">
+                        {savedContext(mergeResult.originalSize - mergeResult.finalSize)}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             </section>

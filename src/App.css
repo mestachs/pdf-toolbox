@@ -95,6 +95,11 @@
   font-weight: 600;
 }
 
+.total-size {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+
 /* ── Drop zone ───────────────────────────────────────────── */
 
 .drop-zone {
@@ -363,6 +368,34 @@
   width: 100%;
   font-size: 0.78rem;
   color: var(--text-dim);
+}
+
+.merge-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  width: 100%;
+}
+
+.merge-result-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: #4ade80;
+}
+
+.merge-saved {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.merge-planet {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  font-style: italic;
+  margin: 0;
 }
 
 /* ── Spinner ─────────────────────────────────────────────── */
