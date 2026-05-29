@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+  </defs>
+  <!-- page body -->
+  <path d="M6 3a2 2 0 0 0-2 2v22a2 2 0 0 0 2 2h20a2 2 0 0 0 2-2V11L18 3H6z" fill="url(#g)"/>
+  <!-- folded corner -->
+  <path d="M18 3v8h8" fill="white" fill-opacity="0.25"/>
+  <!-- lines -->
+  <line x1="10" y1="17" x2="22" y2="17" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <line x1="10" y1="21" x2="22" y2="21" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  <line x1="10" y1="25" x2="17" y2="25" stroke="white" stroke-width="2" stroke-linecap="round"/>
+</svg>
