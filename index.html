@@ -3,6 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+    <script>
+      // Register a service worker that injects COOP/COEP headers so
+      // SharedArrayBuffer (required by the GhostScript Wasm module) is available
+      // on hosts like GitHub Pages that cannot set HTTP headers directly.
+      if (!self.crossOriginIsolated && "serviceWorker" in navigator) {
+        navigator.serviceWorker
+          .register("%BASE_URL%coi-serviceworker.js")
+          .then(function (reg) {
+            // After first install the SW isn't controlling this page yet — reload
+            // so the next load goes through the SW and gets isolation headers.
+            if (!navigator.serviceWorker.controller) {
+              window.location.reload();
+            }
+          });
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PDF Toolbox</title>
   </head>
