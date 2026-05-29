@@ -64,7 +64,7 @@ const SAVED_CONTEXTS = [
   { max: 700_000,       text: "the original Netscape Navigator installer" },
   { max: 1_500_000,     text: "a floppy disk stuffed with clipart" },
   { max: 4_000_000,     text: "a 3-minute MP3 of questionable taste" },
-  { max: 8_000_000,     text: "a slightly blurry holiday JPEG" },
+  { max: 8_000_000,     text: "a 12-megapixel photo of someone's lunch you didn't ask for" },
   { max: 15_000_000,    text: "the original Doom — yes, the whole game" },
   { max: 30_000_000,    text: "a Windows 3.11 for Workgroups install" },
   { max: 60_000_000,    text: "an hour of podcast nobody asked for" },
