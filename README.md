@@ -1,5 +1,21 @@
 
-For the 
+Merge, reorder, and compress PDF documents entirely in your browser
+
+deployed : https://mestachs.github.io/pdf-toolbox/
+
+______________________
+
+
+For the development
+
+```
+bun install
+bun run dev
+```
+
+To deploy 
+
+bun run deploy
 
 For the compression thanks to 
  - https://github.com/ochachacha/ps-wasm for the ps port to wasm
