@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees } from "pdf-lib";
 import { Document, Page, pdfjs } from "react-pdf";
 import { ReactSortable } from "react-sortablejs";
 import { _GSPS2PDF } from "./lib/worker-init.js";
@@ -35,6 +35,52 @@ async function createPdfFromImage(imageFile) {
   });
   const pdfBytes = await pdfDoc.save();
   return new Blob([pdfBytes], { type: "application/pdf" });
+}
+
+// Per-page width/height/rotation, used to orient thumbnails and to apply extra rotation on merge.
+async function readPageInfo(blob) {
+  try {
+    const doc = await PDFDocument.load(await blob.arrayBuffer());
+    return doc.getPages().map((page) => {
+      const { width, height } = page.getSize();
+      return { width, height, rotation: page.getRotation().angle };
+    });
+  } catch {
+    return null; // e.g. encrypted: no page selection, merge will report the error
+  }
+}
+
+// "1-3, 5, 8-" → zero-based indices in the given order; "" → all pages; "5-1" → reversed.
+function parsePageSpec(spec, numPages) {
+  const all = Array.from({ length: numPages }, (_, i) => i);
+  const text = (spec || "").trim().replace(/\s*-\s*/g, "-");
+  if (!text) return { indices: all };
+  const indices = [];
+  for (const part of text.split(/[\s,;]+/).filter(Boolean)) {
+    const m = part.match(/^(\d*)(-?)(\d*)$/);
+    if (!m || (!m[1] && !m[3])) return { error: `"${part}" is not a page or range` };
+    const from = m[1] ? Number(m[1]) : 1;
+    const to = m[2] ? (m[3] ? Number(m[3]) : numPages) : from;
+    for (const n of [from, to]) {
+      if (n < 1 || n > numPages) return { error: `page ${n} is outside 1–${numPages}` };
+    }
+    const step = from <= to ? 1 : -1;
+    for (let n = from; n !== to + step; n += step) indices.push(n - 1);
+  }
+  return { indices };
+}
+
+const normalizeAngle = (angle) => ((angle % 360) + 360) % 360;
+
+function pageRotation(fileObj, index) {
+  return normalizeAngle((fileObj.pageInfo?.[index]?.rotation ?? 0) + fileObj.rotation);
+}
+
+function isLandscape(fileObj, index) {
+  const info = fileObj.pageInfo?.[index];
+  if (!info) return fileObj.rotation % 180 !== 0;
+  const swapped = pageRotation(fileObj, index) % 180 !== 0;
+  return swapped ? info.height > info.width : info.width > info.height;
 }
 
 function loadPDFData(response) {
@@ -86,9 +132,11 @@ function PDFMerger() {
   const [mergeResult, setMergeResult] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
 
-  const [previewFile, setPreviewFile] = useState(null);
+  const [previewId, setPreviewId] = useState(null);
   const [previewScale, setPreviewScale] = useState(1.0);
   const [numPages, setNumPages] = useState(null);
+
+  const previewFile = pdfFiles.find((f) => f.id === previewId) ?? null;
 
   const fileInputRef = useRef(null);
   const previewContentRef = useRef(null);
@@ -110,20 +158,46 @@ function PDFMerger() {
   }, [previewFile]); // re-attach when panel mounts/unmounts
 
   const processFiles = async (files) => {
-    const pdfObjects = [...pdfFiles];
+    const added = [];
     for (const file of files) {
-      if (file.type.startsWith("image/")) {
-        const pdf = await createPdfFromImage(file);
-        const sizeInMB = (pdf.size / (1024 * 1024)).toFixed(2);
-        pdfObjects.push({ id: idCounter++, name: file.name, file: pdf, url: URL.createObjectURL(pdf), sizeInMB, sizeBytes: pdf.size });
-      } else if (file.type === "application/pdf") {
-        const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
-        pdfObjects.push({ id: idCounter++, name: file.name, file, url: URL.createObjectURL(file), sizeInMB, sizeBytes: file.size });
-      }
+      let pdf;
+      if (file.type.startsWith("image/")) pdf = await createPdfFromImage(file);
+      else if (file.type === "application/pdf") pdf = file;
+      else continue;
+      const pageInfo = await readPageInfo(pdf);
+      added.push({
+        id: idCounter++,
+        name: file.name,
+        file: pdf,
+        url: URL.createObjectURL(pdf),
+        sizeInMB: (pdf.size / (1024 * 1024)).toFixed(2),
+        sizeBytes: pdf.size,
+        pageInfo,
+        numPages: pageInfo?.length ?? null,
+        rotation: 0,
+        pageSpec: "",
+      });
     }
     setMergeResult(null);
-    setPdfFiles([...pdfObjects]);
+    setPdfFiles((current) => [...current, ...added]);
   };
+
+  const updateFile = (id, changes) => {
+    setPdfFiles((files) => files.map((f) => (f.id === id ? { ...f, ...changes } : f)));
+    setMergeResult(null);
+  };
+
+  const rotateFile = (e, fileObj, delta) => {
+    e.stopPropagation();
+    updateFile(fileObj.id, { rotation: normalizeAngle(fileObj.rotation + delta) });
+  };
+
+  const selectionOf = (fileObj) =>
+    fileObj.numPages == null ? { indices: null } : parsePageSpec(fileObj.pageSpec, fileObj.numPages);
+
+  const selections = pdfFiles.map(selectionOf);
+  const hasSelectionError = selections.some((sel) => sel.error);
+  const outputPages = selections.reduce((sum, sel, i) => sum + (sel.indices?.length ?? pdfFiles[i].numPages ?? 0), 0);
 
   const handleFileChange = async (event) => {
     await processFiles(Array.from(event.target.files));
@@ -134,12 +208,13 @@ function PDFMerger() {
   const handleDragLeave = (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setIsDragging(false); };
   const handleDrop = async (e) => { e.preventDefault(); setIsDragging(false); await processFiles(Array.from(e.dataTransfer.files)); };
 
+  const closePreview = () => { setPreviewId(null); setNumPages(null); };
+
   const handleCardClick = (file) => {
-    if (previewFile?.id === file.id) {
-      setPreviewFile(null);
-      setNumPages(null);
+    if (previewId === file.id) {
+      closePreview();
     } else {
-      setPreviewFile(file);
+      setPreviewId(file.id);
       setPreviewScale(1.0);
       setNumPages(null);
     }
@@ -149,7 +224,7 @@ function PDFMerger() {
     e.stopPropagation();
     setPdfFiles((files) => files.filter((f) => f.id !== id));
     setMergeResult(null);
-    if (previewFile?.id === id) { setPreviewFile(null); setNumPages(null); }
+    if (previewId === id) closePreview();
   };
 
   const zoomIn = () => setPreviewScale((s) => Math.min(3, parseFloat((s + 0.25).toFixed(2))));
@@ -166,11 +241,15 @@ function PDFMerger() {
     setIsLoading(true);
     try {
       const mergedPdf = await PDFDocument.create();
-      for (const { file } of pdfFiles) {
-        const arrayBuffer = await file.arrayBuffer();
+      for (const fileObj of pdfFiles) {
+        const arrayBuffer = await fileObj.file.arrayBuffer();
         const pdfDoc = await PDFDocument.load(arrayBuffer);
-        for (const pageIndex of pdfDoc.getPageIndices()) {
-          const [copied] = await mergedPdf.copyPages(pdfDoc, [pageIndex]);
+        const { indices } = parsePageSpec(fileObj.pageSpec, pdfDoc.getPageCount());
+        const copiedPages = await mergedPdf.copyPages(pdfDoc, indices);
+        for (const copied of copiedPages) {
+          if (fileObj.rotation) {
+            copied.setRotation(degrees(normalizeAngle(copied.getRotation().angle + fileObj.rotation)));
+          }
           mergedPdf.addPage(copied);
         }
       }
@@ -252,10 +331,13 @@ function PDFMerger() {
                 <span className="total-size">{fmtSize(pdfFiles.reduce((s, f) => s + f.sizeBytes, 0))}</span>
               </div>
               <div className={`documents-layout${previewFile ? " has-preview" : ""}`}>
-                <ReactSortable list={pdfFiles} setList={setPdfFiles} className="document-grid">
+                <ReactSortable list={pdfFiles} setList={setPdfFiles} className="document-grid" filter=".no-drag" preventOnFilter={false}>
                   {pdfFiles.map((fileObj) => {
-                    const { id, url, name, sizeInMB } = fileObj;
-                    const selected = previewFile?.id === id;
+                    const { id, url, name, sizeInMB, numPages: pageCount, pageSpec } = fileObj;
+                    const selected = previewId === id;
+                    const selection = selectionOf(fileObj);
+                    const thumbIndex = selection.indices?.[0] ?? 0;
+                    const thumbSize = isLandscape(fileObj, thumbIndex) ? { width: 184 } : { height: 260 };
                     return (
                       <div
                         key={id}
@@ -277,8 +359,29 @@ function PDFMerger() {
                         </div>
                         <div className="document-preview">
                           <Document file={url}>
-                            <Page size="A4" pageNumber={1} height={260} />
+                            <Page pageNumber={thumbIndex + 1} rotate={pageRotation(fileObj, thumbIndex)} {...thumbSize} />
                           </Document>
+                        </div>
+                        <div className="document-options no-drag" onClick={(e) => e.stopPropagation()}>
+                          <div className="rotate-group">
+                            <button className="rotate-btn" onClick={(e) => rotateFile(e, fileObj, -90)} title="Rotate left">↺</button>
+                            <button className="rotate-btn" onClick={(e) => rotateFile(e, fileObj, 90)} title="Rotate right">↻</button>
+                            {fileObj.rotation !== 0 && <span className="rotate-angle">{fileObj.rotation}°</span>}
+                          </div>
+                          {pageCount > 1 && (
+                            <label className={`page-spec${selection.error ? " invalid" : ""}`} title={selection.error ?? "Pages to keep, e.g. 1-3, 5, 8- (empty = all)"}>
+                              <input
+                                type="text"
+                                value={pageSpec}
+                                onChange={(e) => updateFile(id, { pageSpec: e.target.value })}
+                                placeholder={`all ${pageCount}`}
+                                spellCheck={false}
+                              />
+                              <span className="page-spec-count">
+                                {selection.error ? "!" : `${selection.indices.length}/${pageCount}`}
+                              </span>
+                            </label>
+                          )}
                         </div>
                       </div>
                     );
@@ -304,7 +407,7 @@ function PDFMerger() {
                       </div>
                       <button
                         className="preview-close"
-                        onClick={() => { setPreviewFile(null); setNumPages(null); }}
+                        onClick={closePreview}
                         title="Close preview"
                       >✕</button>
                     </div>
@@ -314,11 +417,15 @@ function PDFMerger() {
                         file={previewFile.url}
                         onLoadSuccess={({ numPages: n }) => setNumPages(n)}
                       >
-                        {numPages && Array.from({ length: numPages }, (_, i) => (
-                          <div key={i} className="preview-page">
-                            <Page pageNumber={i + 1} scale={previewScale} />
-                          </div>
-                        ))}
+                        {numPages && Array.from({ length: numPages }, (_, i) => {
+                          const kept = selectionOf(previewFile).indices?.includes(i) ?? true;
+                          return (
+                            <div key={i} className={`preview-page${kept ? "" : " excluded"}`}>
+                              <span className="preview-page-label">{i + 1}{kept ? "" : " · skipped"}</span>
+                              <Page pageNumber={i + 1} scale={previewScale} rotate={pageRotation(previewFile, i)} />
+                            </div>
+                          );
+                        })}
                       </Document>
                     </div>
                   </div>
@@ -348,7 +455,13 @@ function PDFMerger() {
                   />
                   <span className="filename-ext">.pdf</span>
                 </div>
-                <button className="merge-btn" onClick={mergePDFs} disabled={isLoading}>
+                <span className="output-pages">{outputPages} page{outputPages !== 1 ? "s" : ""}</span>
+                <button
+                  className="merge-btn"
+                  onClick={mergePDFs}
+                  disabled={isLoading || hasSelectionError || outputPages === 0}
+                  title={hasSelectionError ? "Fix the invalid page ranges first" : undefined}
+                >
                   {isLoading ? (
                     <>
                       <span className="spinner" />
